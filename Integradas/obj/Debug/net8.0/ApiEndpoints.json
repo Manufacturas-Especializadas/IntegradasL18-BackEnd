@@ -1,0 +1,49 @@
+[
+  {
+    "ContainingType": "Integradas.Controllers.IntegratedController",
+    "Method": "ProductionOrderIncrease",
+    "RelativePath": "api/Integrated/ProductionOrderIncrease",
+    "HttpMethod": "POST",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "File",
+        "Type": "Microsoft.AspNetCore.Http.IFormFile",
+        "IsRequired": false
+      },
+      {
+        "Name": "WeekNumber",
+        "Type": "System.Int32",
+        "IsRequired": false
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "Integradas.Controllers.IntegratedController",
+    "Method": "GetWeekDetails",
+    "RelativePath": "api/Integrated/Week/{weekNumber}",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [
+      {
+        "Name": "weekNumber",
+        "Type": "System.Int32",
+        "IsRequired": true
+      }
+    ],
+    "ReturnTypes": []
+  },
+  {
+    "ContainingType": "Integradas.Controllers.IntegratedController",
+    "Method": "GetWeeksSummary",
+    "RelativePath": "api/Integrated/Weeks/summary",
+    "HttpMethod": "GET",
+    "IsController": true,
+    "Order": 0,
+    "Parameters": [],
+    "ReturnTypes": []
+  }
+]
