@@ -109,6 +109,100 @@ namespace Integradas.Controllers
         }
 
         [HttpPost]
+        [Route("Scan")]
+        public async Task<IActionResult> ScanPart([FromBody] ScanRequestDto request)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(request.PartNumber))
+                {
+                    return BadRequest(new ScanResponseDto
+                    {
+                        Success = false,
+                        Message = "El número de parte es requerido"
+                    });
+                }
+
+                var order = await _context.Integradas
+                    .FirstOrDefaultAsync(o =>
+                        o.PartNumber == request.PartNumber.Trim() &&
+                        o.WeekNumber == request.WeekNumber);
+
+                if (order == null)
+                {
+                    return NotFound(new ScanResponseDto
+                    {
+                        Success = false,
+                        Message = $"No se encontró la orden para el número de parte {request.PartNumber} en la semana {request.WeekNumber}"
+                    });
+                }
+
+                if (order.Completed)
+                {
+                    return BadRequest(new ScanResponseDto
+                    {
+                        Success = false,
+                        Message = $"La orden {order.PartNumber} ya está completada"
+                    });
+                }
+
+                order.ScannedQuantity = (order.ScannedQuantity ?? 0) + 1;
+
+                var amount = order.Amount ?? 0;
+                if (order.ScannedQuantity >= amount)
+                {
+                    order.Completed = true;
+                    order.CompletedDate = DateTime.UtcNow;
+                }
+
+                await _context.SaveChangesAsync();
+
+                var remaining = Math.Max(0, amount - (int)order.ScannedQuantity);
+                var progressPercentage = amount > 0 ?
+                    (double)order.ScannedQuantity / amount * 100 : 0;
+
+                var orderDto = new OrderDetailDto
+                {
+                    Id = order.Id,
+                    Type = order.Type ?? string.Empty,
+                    PartNumber = order.PartNumber ?? string.Empty,
+                    Pipeline = order.Pipeline ?? string.Empty,
+                    Amount = amount,
+                    ScannedQuantity = order.ScannedQuantity,
+                    Completed = order.Completed,
+                    CreatedAt = order.CreatedAt,
+                    CompletedDate = order.CompletedDate
+                };
+
+                return Ok(new ScanResponseDto
+                {
+                    Success = true,
+                    Message = order.Completed ?
+                        $"¡COMPLETADO! {order.PartNumber} - {order.ScannedQuantity}/{amount}" :
+                        $"Escaneado: {order.ScannedQuantity}/{amount}",
+                    PartNumber = order.PartNumber ?? string.Empty,
+                    ScannedQuantity = order.ScannedQuantity,
+                    RequiredQuantity = amount,
+                    Completed = order.Completed,
+                    Remaining = remaining,
+                    ProgressPercentage = progressPercentage,
+                    Order = orderDto
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error en Scan: {ex.Message}");
+                Console.WriteLine($"StackTrace: {ex.StackTrace}");
+
+                return StatusCode(500, new ScanResponseDto
+                {
+                    Success = false,
+                    Message = $"Error al escanear: {ex.Message}"
+                });
+            }
+        }
+
+        [HttpPost]
         [Route("ProductionOrderIncrease")]
         public async Task<IActionResult> ProductionOrderIncrease([FromForm] ExcelUploadRequest request)
         {
