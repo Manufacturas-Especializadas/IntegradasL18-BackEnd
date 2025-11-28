@@ -123,6 +123,15 @@ namespace Integradas.Controllers
                     });
                 }
 
+                if (request.Quantity <= 0)
+                {
+                    return BadRequest(new ScanResponseDto
+                    {
+                        Success = false,
+                        Message = "La cantidad debe ser mayor a 0"
+                    });
+                }
+
                 var order = await _context.Integradas
                     .FirstOrDefaultAsync(o =>
                         o.PartNumber == request.PartNumber.Trim() &&
@@ -146,10 +155,24 @@ namespace Integradas.Controllers
                     });
                 }
 
-                order.ScannedQuantity = (order.ScannedQuantity ?? 0) + 1;
+                var currentScanned = order.ScannedQuantity ?? 0;
+                var requiredAmount = order.Amount ?? 0;
 
-                var amount = order.Amount ?? 0;
-                if (order.ScannedQuantity >= amount)
+                var newScannedQuantity = currentScanned + request.Quantity;
+
+                if (newScannedQuantity > requiredAmount)
+                {
+                    var excess = newScannedQuantity - requiredAmount;
+                    return BadRequest(new ScanResponseDto
+                    {
+                        Success = false,
+                        Message = $"No se pueden agregar {request.Quantity} unidades. Excede la cantidad requerida por {excess} unidades. Máximo permitido: {requiredAmount - currentScanned}"
+                    });
+                }
+
+                order.ScannedQuantity = newScannedQuantity;
+
+                if (order.ScannedQuantity >= requiredAmount)
                 {
                     order.Completed = true;
                     order.CompletedDate = DateTime.UtcNow;
@@ -157,9 +180,10 @@ namespace Integradas.Controllers
 
                 await _context.SaveChangesAsync();
 
-                var remaining = Math.Max(0, amount - (int)order.ScannedQuantity);
-                var progressPercentage = amount > 0 ?
-                    (double)order.ScannedQuantity / amount * 100 : 0;
+                var updatedScanned = order.ScannedQuantity ?? 0;
+                var remaining = Math.Max(0, requiredAmount - updatedScanned);
+                var progressPercentage = requiredAmount > 0 ?
+                    (double)updatedScanned / requiredAmount * 100 : 0;
 
                 var orderDto = new OrderDetailDto
                 {
@@ -167,8 +191,8 @@ namespace Integradas.Controllers
                     Type = order.Type ?? string.Empty,
                     PartNumber = order.PartNumber ?? string.Empty,
                     Pipeline = order.Pipeline ?? string.Empty,
-                    Amount = amount,
-                    ScannedQuantity = order.ScannedQuantity,
+                    Amount = requiredAmount,
+                    ScannedQuantity = updatedScanned,
                     Completed = order.Completed,
                     CreatedAt = order.CreatedAt,
                     CompletedDate = order.CompletedDate
@@ -178,11 +202,12 @@ namespace Integradas.Controllers
                 {
                     Success = true,
                     Message = order.Completed ?
-                        $"¡COMPLETADO! {order.PartNumber} - {order.ScannedQuantity}/{amount}" :
-                        $"Escaneado: {order.ScannedQuantity}/{amount}",
+                        $"¡COMPLETADO! {order.PartNumber} - Se agregaron {request.Quantity} unidades. Total: {updatedScanned}/{requiredAmount}" :
+                        $"Escaneado: Se agregaron {request.Quantity} unidades. Total: {updatedScanned}/{requiredAmount}",
                     PartNumber = order.PartNumber ?? string.Empty,
-                    ScannedQuantity = order.ScannedQuantity,
-                    RequiredQuantity = amount,
+                    ScannedQuantity = updatedScanned,
+                    RequiredQuantity = requiredAmount,
+                    AddedQuantity = request.Quantity,
                     Completed = order.Completed,
                     Remaining = remaining,
                     ProgressPercentage = progressPercentage,
@@ -190,10 +215,7 @@ namespace Integradas.Controllers
                 });
             }
             catch (Exception ex)
-            {
-                Console.WriteLine($"Error en Scan: {ex.Message}");
-                Console.WriteLine($"StackTrace: {ex.StackTrace}");
-
+            
                 return StatusCode(500, new ScanResponseDto
                 {
                     Success = false,

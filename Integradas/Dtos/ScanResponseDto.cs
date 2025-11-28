@@ -12,6 +12,8 @@
 
         public int RequiredQuantity { get; set; }
 
+        public int AddedQuantity { get; set; }
+
         public bool Completed { get; set; }
 
         public int Remaining { get; set; }
