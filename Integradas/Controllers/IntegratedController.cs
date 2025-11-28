@@ -108,6 +108,68 @@ namespace Integradas.Controllers
             }
         }
 
+        [HttpGet]
+        [Route("GenerateReport/{weekNumber}")]
+        public async Task<IActionResult> GenerateReport(int weekNumber, [FromQuery] string reportType = "detailed")
+        {
+            try
+            {
+                if(reportType != "detailed" && reportType != "summary")
+                {
+                    return BadRequest(new ReportResponseDto
+                    {
+                        Success = false,
+                        Message = "Tipo de reporte no válido. Use detailed o summary"
+                    });
+                }
+
+                var weekData = await _context.Integradas
+                            .Where(x => x.WeekNumber == weekNumber)
+                            .OrderBy(x => x.PartNumber)
+                            .ToListAsync();
+
+                if(!weekData.Any())
+                {
+                    return NotFound(new ReportResponseDto
+                    {
+                        Success = false,
+                        Message = $"No se encontraron datos para la semana {weekNumber}"
+                    });
+                }
+
+                using (var workbook = new XLWorkbook())
+                {
+                    if(reportType == "detailed")
+                    {
+                        GenerateDetailedReport(workbook, weekData, weekNumber);
+                    }
+                    else
+                    {
+                        GenerateSummaryReport(workbook, weekData, weekNumber);
+                    }
+
+                    using (var stream = new MemoryStream())
+                    {
+                        workbook.SaveAs(stream);
+                        var content = stream.ToArray();
+
+                        var fileName = $"Reporte_Semana_{weekNumber}_{DateTime.Now:ddMMyyyy_HHmmss}.xlsx";
+
+                        return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
+                    }
+
+                }
+            }
+            catch(Exception ex)
+            {
+                return StatusCode(500, new ReportResponseDto
+                {
+                    Success = false,
+                    Message = $"Error generando el reporte: {ex.Message}"
+                });
+            }
+        }
+
         [HttpPost]
         [Route("Scan")]
         public async Task<IActionResult> ScanPart([FromBody] ScanRequestDto request)
@@ -375,6 +437,293 @@ namespace Integradas.Controllers
             {
                 throw new Exception($"Error guardando registros: {ex.Message}", ex);
             }
+        }
+
+        private void GenerateDetailedReport(XLWorkbook workbook, List<Models.Integradas> weekData, int weekNumber)
+        {
+            var worksheet = workbook.Worksheets.Add($"Semana {weekNumber} - Detallado");
+
+            var titleStyle = workbook.Style;
+            titleStyle.Font.Bold = true;
+            titleStyle.Font.FontSize = 16;
+            titleStyle.Font.FontColor = XLColor.White;
+            titleStyle.Fill.BackgroundColor = XLColor.FromHtml("#2E86AB");
+            titleStyle.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            titleStyle.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+
+            var subtitleStyle = workbook.Style;
+            subtitleStyle.Font.Bold = true;
+            subtitleStyle.Font.FontSize = 12;
+            subtitleStyle.Font.FontColor = XLColor.FromHtml("#2E86AB");
+            subtitleStyle.Alignment.Horizontal = XLAlignmentHorizontalValues.Left;
+
+            var headerStyle = workbook.Style;
+            headerStyle.Font.Bold = true;
+            headerStyle.Font.FontSize = 10;
+            headerStyle.Font.FontColor = XLColor.White;
+            headerStyle.Fill.BackgroundColor = XLColor.FromHtml("#A23B72");
+            headerStyle.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            headerStyle.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            headerStyle.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            headerStyle.Border.OutsideBorderColor = XLColor.Black;
+
+            var dataStyle = workbook.Style;
+            dataStyle.Font.FontSize = 9;
+            dataStyle.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            dataStyle.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            dataStyle.Border.OutsideBorderColor = XLColor.Gray;
+            
+            var alternateStyle = workbook.Style;
+            alternateStyle.Font.FontSize = 9;
+            alternateStyle.Fill.BackgroundColor = XLColor.FromHtml("#F8F9FA");
+            alternateStyle.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            alternateStyle.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            alternateStyle.Border.OutsideBorderColor= XLColor.Gray;
+
+            var completedStyle = workbook.Style;
+            completedStyle.Font.FontSize = 9;
+            completedStyle.Font.FontColor = XLColor.FromHtml("#28A745");
+            completedStyle.Fill.BackgroundColor = XLColor.FromHtml("#D4EDDA");
+            completedStyle.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            completedStyle.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            completedStyle.Border.OutsideBorderColor = XLColor.Gray;
+
+            var pendingStyle = workbook.Style;
+            pendingStyle.Font.FontSize = 9;
+            pendingStyle.Font.FontColor = XLColor.FromHtml("#DC3545");
+            pendingStyle.Fill.BackgroundColor = XLColor.FromHtml("#F8D7DA");
+            pendingStyle.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            pendingStyle.Border.OutsideBorder = XLBorderStyleValues.Thin;
+            pendingStyle.Border.OutsideBorderColor = XLColor.Gray;
+
+            worksheet.Cell("A1").Value = $"REPORTE DE PRODUCCIÓN - SEMANA {weekNumber}";
+            worksheet.Range("A1:L1").Merge();
+            worksheet.Range("A1:L1").Style = titleStyle;
+            worksheet.Row(1).Height = 25;
+
+            worksheet.Cell("A2").Value = "Integradas L-18";
+            worksheet.Cell("A2").Style = subtitleStyle;
+            worksheet.Cell("E2").Value = "Fecha de generación:";
+            worksheet.Cell("F2").Value = DateTime.Now.ToString("dd/MM/yyyy HH:mm");
+            worksheet.Cell("F2").Style.Font.Bold = true;
+
+            worksheet.Cell("A3").Value = "Sistema de Gestión de Producción";
+            worksheet.Cell("A3").Style.Font.Italic = true;
+            worksheet.Cell("E3").Value = "Total de órdenes:";
+            worksheet.Cell("F3").Value = weekData.Count;
+            worksheet.Cell("F3").Style.Font.Bold = true;
+
+            var completedCount = weekData.Count(x => x.Completed);
+            var pendingCount = weekData.Count(x => !x.Completed);
+            var totalRequired = weekData.Sum(x => x.Amount ?? 0);
+            var totalScanned = weekData.Sum(x => x.ScannedQuantity ?? 0);
+            var progressPercentage = totalRequired > 0 ? (double)totalScanned / totalRequired * 100 : 0;
+
+            worksheet.Cell("I2").Value = "Completadas:";
+            worksheet.Cell("J2").Value = completedCount;
+            worksheet.Cell("J2").Style.Font.Bold = true;
+            worksheet.Cell("J2").Style.Fill.BackgroundColor = XLColor.FromHtml("#D4EDDA");
+
+            worksheet.Cell("I3").Value = "Pendientes:";
+            worksheet.Cell("J3").Value = pendingCount;
+            worksheet.Cell("J3").Style.Font.Bold = true;
+            worksheet.Cell("J3").Style.Fill.BackgroundColor = XLColor.FromHtml("#F8D7DA");
+
+            worksheet.Cell("K2").Value = "Progreso total:";
+            worksheet.Cell("L2").Value = $"{progressPercentage:F1}%";
+            worksheet.Cell("L2").Style.Font.Bold = true;
+
+            worksheet.Cell("K3").Value = "Total escaneado:";
+            worksheet.Cell("L3").Value = $"{totalScanned}/{totalRequired}";
+            worksheet.Cell("L3").Style.Font.Bold = true;
+
+            var headers = new[]
+            {
+                "ID", "Número de Parte", "Tipo", "Tubería (OD Pulg)",
+                "Cantidad Requerida", "Cantidad Escaneada", "Restante",
+                "Progreso %", "Estado", "Fecha Creación", "Fecha Completado", "Semana"
+            };
+
+            int currentRow = 5;
+            for (int i = 0; i < headers.Length; i++)
+            {
+                worksheet.Cell(currentRow, i + 1).Value = headers[i];
+                worksheet.Cell(currentRow, i + 1).Style = headerStyle;
+                worksheet.Column(i + 1).Width = 15;
+            }
+
+            worksheet.Column(2).Width = 20;
+            worksheet.Column(4).Width = 18;
+            worksheet.Column(10).Width = 18;
+            worksheet.Column(11).Width = 18;
+
+            currentRow++;
+            foreach (var order in weekData)
+            {
+                var row = worksheet.Row(currentRow);
+                row.Height = 20;
+
+                var progress = order.Amount > 0 ? (double)(order.ScannedQuantity ?? 0) / order.Amount * 100 : 0;
+                var remaining = Math.Max(0, (order.Amount ?? 0) - (order.ScannedQuantity ?? 0));
+                var status = order.Completed ? "COMPLETADO" : "EN PROGRESO";
+
+                worksheet.Cell(currentRow, 1).Value = order.Id;
+                worksheet.Cell(currentRow, 2).Value = order.PartNumber;
+                worksheet.Cell(currentRow, 3).Value = order.Type;
+                worksheet.Cell(currentRow, 4).Value = order.Pipeline;
+                worksheet.Cell(currentRow, 5).Value = order.Amount;
+                worksheet.Cell(currentRow, 6).Value = order.ScannedQuantity;
+                worksheet.Cell(currentRow, 7).Value = remaining;
+                worksheet.Cell(currentRow, 8).Value = progress;
+                worksheet.Cell(currentRow, 9).Value = status;
+                worksheet.Cell(currentRow, 10).Value = order.CreatedAt?.ToString("dd/MM/yyyy HH:mm");
+                worksheet.Cell(currentRow, 11).Value = order.CompletedDate?.ToString("dd/MM/yyyy HH:mm");
+                worksheet.Cell(currentRow, 12).Value = order.WeekNumber;
+
+                IXLStyle cellStyle;
+
+                if (order.Completed)
+                {
+                    cellStyle = completedStyle;
+                }
+                else if (remaining == 0 && (order.ScannedQuantity ?? 0) >= (order.Amount ?? 0))
+                {
+                    cellStyle = completedStyle;
+                }
+                else
+                {
+                    cellStyle = (currentRow % 2 == 0) ? dataStyle : alternateStyle;
+                }
+
+                for (int col = 1; col <= 12; col++)
+                {
+                    worksheet.Cell(currentRow, col).Style = cellStyle;
+
+                    if (col == 8)
+                    {
+                        worksheet.Cell(currentRow, col).Style.NumberFormat.Format = "0.0%";
+                    }
+
+                    if (col >= 5 && col <= 8) // Columnas numéricas
+                    {
+                        worksheet.Cell(currentRow, col).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                    }
+                }
+
+                currentRow++;
+            }
+
+            currentRow += 2;
+            worksheet.Cell(currentRow, 1).Value = "RESUMEN EJECUTIVO";
+            worksheet.Range($"A{currentRow}:L{currentRow}").Merge();
+            worksheet.Range($"A{currentRow}:L{currentRow}").Style = headerStyle;
+
+            currentRow++;
+            worksheet.Cell(currentRow, 1).Value = "Métrica";
+            worksheet.Cell(currentRow, 2).Value = "Valor";
+            worksheet.Cell(currentRow, 1).Style = headerStyle;
+            worksheet.Cell(currentRow, 2).Style = headerStyle;
+
+            var metrics = new[]
+            {
+                ("Total de Órdenes", weekData.Count.ToString()),
+                ("Órdenes Completadas", $"{completedCount} ({((double)completedCount/weekData.Count*100):F1}%)"),
+                ("Órdenes Pendientes", $"{pendingCount} ({((double)pendingCount/weekData.Count*100):F1}%)"),
+                ("Cantidad Total Requerida", totalRequired.ToString()),
+                ("Cantidad Total Escaneada", totalScanned.ToString()),
+                ("Progreso General", $"{progressPercentage:F1}%"),
+                ("Eficiencia de Producción", $"{((double)completedCount/weekData.Count*100):F1}%")
+            };
+
+            foreach (var (metric, value) in metrics)
+            {
+                currentRow++;
+                worksheet.Cell(currentRow, 1).Value = metric;
+                worksheet.Cell(currentRow, 2).Value = value;
+                worksheet.Cell(currentRow, 1).Style = dataStyle;
+                worksheet.Cell(currentRow, 2).Style = dataStyle;
+                worksheet.Cell(currentRow, 2).Style.Font.Bold = true;
+            }
+
+            currentRow += 2;
+            worksheet.Cell(currentRow, 1).Value = "Generado por:";
+            worksheet.Cell(currentRow, 6).Value = "Revisado por:";
+            worksheet.Cell(currentRow, 11).Value = "Aprobado por:";
+
+            currentRow += 3;
+            worksheet.Cell(currentRow, 1).Value = "_________________________";
+            worksheet.Cell(currentRow, 6).Value = "_________________________";
+            worksheet.Cell(currentRow, 11).Value = "_________________________";
+
+            worksheet.SheetView.FreezeRows(5);
+        }
+
+        private void GenerateSummaryReport(XLWorkbook workbook, List<Models.Integradas> weekData, int weekNumber)
+        {
+            var worksheet = workbook.Worksheets.Add($"Semana {weekNumber} - Resumen");
+
+            var titleStyle = workbook.Style;
+            titleStyle.Font.Bold = true;
+            titleStyle.Font.FontSize = 14;
+            titleStyle.Font.FontColor = XLColor.White;
+            titleStyle.Fill.BackgroundColor = XLColor.FromHtml("#2E86AB");
+            titleStyle.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            var headerStyle = workbook.Style;
+            headerStyle.Font.Bold = true;
+            headerStyle.Font.FontSize = 10;
+            headerStyle.Font.FontColor = XLColor.White;
+            headerStyle.Fill.BackgroundColor = XLColor.FromHtml("#A23B72");
+            headerStyle.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            worksheet.Cell("A1").Value = $"REPORTE RESUMEN - SEMANA {weekNumber}";
+            worksheet.Range("A1:F1").Merge();
+            worksheet.Range("A1:F1").Style = titleStyle;
+
+            var statsByType = weekData
+                .GroupBy(x => x.Type ?? "Sin Tipo")
+                .Select(g => new
+                {
+                    Type = g.Key,
+                    TotalOrders = g.Count(),
+                    Completed = g.Count(x => x.Completed),
+                    TotalRequired = g.Sum(x => x.Amount ?? 0),
+                    TotalScanned = g.Sum(x => x.ScannedQuantity ?? 0),
+                    Progress = g.Sum(x => x.Amount ?? 0) > 0 ?
+                        (double)g.Sum(x => x.ScannedQuantity ?? 0) / g.Sum(x => x.Amount ?? 0) * 100 : 0
+                })
+                .OrderByDescending(x => x.TotalOrders)
+                .ToList();
+
+            worksheet.Cell("A3").Value = "Tipo";
+            worksheet.Cell("B3").Value = "Total Órdenes";
+            worksheet.Cell("C3").Value = "Completadas";
+            worksheet.Cell("D3").Value = "Cantidad Requerida";
+            worksheet.Cell("E3").Value = "Cantidad Escaneada";
+            worksheet.Cell("F3").Value = "Progreso %";
+
+            worksheet.Range("A3:F3").Style = headerStyle;
+
+            int row = 4;
+            foreach (var stat in statsByType)
+            {
+                worksheet.Cell(row, 1).Value = stat.Type;
+                worksheet.Cell(row, 2).Value = stat.TotalOrders;
+                worksheet.Cell(row, 3).Value = stat.Completed;
+                worksheet.Cell(row, 4).Value = stat.TotalRequired;
+                worksheet.Cell(row, 5).Value = stat.TotalScanned;
+                worksheet.Cell(row, 6).Value = stat.Progress / 100;
+                worksheet.Cell(row, 6).Style.NumberFormat.Format = "0.0%";
+
+                if (row % 2 == 0)
+                {
+                    worksheet.Range($"A{row}:F{row}").Style.Fill.BackgroundColor = XLColor.FromHtml("#F8F9FA");
+                }
+
+                row++;
+            }
+
+            worksheet.Columns().AdjustToContents();
         }
     }
 }
