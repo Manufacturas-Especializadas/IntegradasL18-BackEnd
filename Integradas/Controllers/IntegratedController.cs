@@ -215,6 +215,7 @@ namespace Integradas.Controllers
                 });
             }
             catch (Exception ex)
+            {
             
                 return StatusCode(500, new ScanResponseDto
                 {
